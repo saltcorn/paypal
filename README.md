@@ -1,2 +1,2 @@
-Paypal moduke for Saltcorn
+Paypal module for Saltcorn
 ==========================
