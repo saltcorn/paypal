@@ -69,7 +69,7 @@ const actions = () => ({
 
       const cbviews = await View.find({ viewtemplate: "Paypal Callback" });
       const amount_options = fields
-        .filter((f) => ["Float", "Integer"].includes(f.type?.name))
+        .filter((f) => ["Float", "Integer", "Money"].includes(f.type?.name))
         .map((f) => f.name);
       amount_options.push("Formula");
 
@@ -119,6 +119,14 @@ const actions = () => ({
       configuration: { currency, amount_field, amount_formula, callback_view },
     }) => {
       let amount;
+      console.log(
+        "amount val",
+        amount_field,
+        row[amount_field],
+        typeof row[amount_field],
+        row
+      );
+
       if (amount_field === "Formula") {
         const joinFields = {};
         add_free_variables_to_joinfields(
@@ -145,8 +153,8 @@ const actions = () => ({
         const amt_row = await amt_table.getRow({
           [amt_table.pk_name]: row[amount_field.split(".")[0]],
         });
-        amount = amt_row[amt_fk_field.name].toFixed(2);
-      } else amount = row[amount_field].toFixed(2);
+        amount = (+amt_row[amt_fk_field.name]).toFixed(2);
+      } else amount = (+row[amount_field]).toFixed(2);
       let use_currency = interpolate(currency, row, user);
       const cfg_base_url = getState().getConfig("base_url");
       const cb_url = `${cfg_base_url}view/${callback_view}?id=${row.id}&amt=${amount}&ccy=${use_currency}`;
@@ -182,144 +190,150 @@ const actions = () => ({
         ],
       };
 
-      paypal.payment.create(create_payment_json, function (error, payment) {
-        if (error) {
-          throw error;
-        } else {
-          for (let i = 0; i < payment.links.length; i++) {
-            if (payment.links[i].rel === "approval_url") {
-              return { json: { goto: payment.links[i].href } };
-            }
+      let { payment, error } = await new Promise((resolve, reject) => {
+        paypal.payment.create(create_payment_json, function (error, payment) {
+          resolve({ error, payment });
+        });
+      });
+      if (error) {
+        throw error;
+      } else {
+        console.log("paypal payment", payment)
+        for (let i = 0; i < payment.links.length; i++) {
+          if (payment.links[i].rel === "approval_url") {
+            return { goto: payment.links[i].href };
           }
         }
+      }
+    },
+  },
+});
+
+const viewtemplates = () => [
+  {
+    name: "Paypal Callback",
+    display_state_form: false,
+    configuration_workflow: () =>
+      new Workflow({
+        steps: [
+          {
+            name: "Callback configuration",
+            disablePreview: true,
+            form: async (context) => {
+              const table = Table.findOne({ id: context.table_id });
+              const views = await View.find({ table_id: table.id });
+              return new Form({
+                fields: [
+                  {
+                    name: "paid_field",
+                    label: "Paid field",
+                    type: "String",
+                    sublabel:
+                      "Optionally, a Boolean field that will be set to true if paid",
+                    attributes: {
+                      options: table.fields
+                        .filter((f) => f.type?.name === "Bool")
+                        .map((f) => f.name),
+                    },
+                  },
+                  {
+                    name: "success_view",
+                    label: "Success view",
+                    type: "String",
+                    required: true,
+                    attributes: {
+                      options: views
+                        .filter((v) => v.name !== context.viewname)
+                        .map((v) => v.name),
+                    },
+                  },
+
+                  {
+                    name: "failure_view",
+                    label: "Failure view",
+                    type: "String",
+                    required: true,
+                    attributes: {
+                      options: views
+                        .filter((v) => v.name !== context.viewname)
+                        .map((v) => v.name),
+                    },
+                  },
+                ],
+              });
+            },
+          },
+        ],
+      }),
+    get_state_fields: () => [],
+    run: async (
+      table_id,
+      viewname,
+      {
+        reference_id_field,
+        paid_field,
+        cancelled_view,
+        success_view,
+        processing_view,
+        failure_view,
+      },
+      state,
+      { req, res }
+    ) => {
+      console.log("state", state);
+      const table = Table.findOne({ id: table_id });
+      const row = await table.getRow({
+        id: state.id,
       });
+      const upd = {};
+
+      const payerId = state.PayerID;
+      const paymentId = state.paymentId;
+
+      const execute_payment_json = {
+        payer_id: payerId,
+        transactions: [
+          {
+            amount: {
+              currency: state.ccy,
+              total: state.amt,
+            },
+          },
+        ],
+      };
+
+      let { success, error } = await new Promise((resolve, reject) => {
+        paypal.payment.execute(
+          paymentId,
+          execute_payment_json,
+          async function (error, success) {
+            if (error) resolve({ error });
+            else resolve({ success });
+          }
+        );
+      });
+
+      let dest_url;
+      if (error) {
+        console.log("paypal error", error);
+
+        if (paid_field) upd[paid_field] = false;
+        dest_url = `/view/${success_view}?id=${row.id}`;
+      } else {
+        console.log("paypal success", JSON.stringify(success, null, 2));
+        if (paid_field) upd[paid_field] = false;
+        dest_url = `/view/${failure_view}?id=${row.id}`;
+      }
+
+      if (Object.keys(upd).length > 0)
+        await table.updateRow(upd, row[table.pk_name]);
+
+      return {
+        goto: dest_url,
+      };
     },
   },
-});
-
-const viewtemplates = () => ({
-  name: "Paypal Callback",
-  display_state_form: false,
-  configuration_workflow: () =>
-    new Workflow({
-      steps: [
-        {
-          name: "Callback configuration",
-          disablePreview: true,
-          form: async (context) => {
-            const table = Table.findOne({ id: context.table_id });
-            const views = await View.find({ table_id: table.id });
-            return new Form({
-              fields: [
-                {
-                  name: "paid_field",
-                  label: "Paid field",
-                  type: "String",
-                  sublabel:
-                    "Optionally, a Boolean field that will be set to true if paid",
-                  attributes: {
-                    options: table.fields
-                      .filter((f) => f.type?.name === "Bool")
-                      .map((f) => f.name),
-                  },
-                },
-                {
-                  name: "success_view",
-                  label: "Success view",
-                  type: "String",
-                  required: true,
-                  attributes: {
-                    options: views
-                      .filter((v) => v.name !== context.viewname)
-                      .map((v) => v.name),
-                  },
-                },
-
-                {
-                  name: "failure_view",
-                  label: "Failure view",
-                  type: "String",
-                  required: true,
-                  attributes: {
-                    options: views
-                      .filter((v) => v.name !== context.viewname)
-                      .map((v) => v.name),
-                  },
-                },
-              ],
-            });
-          },
-        },
-      ],
-    }),
-  get_state_fields: () => [],
-  run: async (
-    table_id,
-    viewname,
-    {
-      reference_id_field,
-      paid_field,
-      cancelled_view,
-      success_view,
-      processing_view,
-      failure_view,
-    },
-    state,
-    { req, res }
-  ) => {
-    console.log("state", state);
-    const table = Table.findOne({ id: table_id });
-    const row = await table.getRow({
-      id: state.id,
-    });
-    const upd = {};
-
-    const payerId = state.PayerID;
-    const paymentId = state.paymentId;
-
-    const execute_payment_json = {
-      payer_id: payerId,
-      transactions: [
-        {
-          amount: {
-            currency: state.ccy,
-            total: state.amt,
-          },
-        },
-      ],
-    };
-
-    let { success, error } = await new Promise((resolve, reject) => {
-      paypal.payment.execute(
-        paymentId,
-        execute_payment_json,
-        async function (error, success) {
-          if (error) resolve({ error });
-          else resolve({ success });
-        }
-      );
-    });
-
-    let dest_url;
-    if (error) {
-      console.log("paypal error", error);
-
-      if (paid_field) upd[paid_field] = false;
-      dest_url = `/view/${success_view}?id=${row.id}`;
-    } else {
-      console.log("paypal success", JSON.stringify(success, null, 2));
-      if (paid_field) upd[paid_field] = false;
-      dest_url = `/view/${failure_view}?id=${row.id}`;
-    }
-
-    if (Object.keys(upd).length > 0)
-      await table.updateRow(upd, row[table.pk_name]);
-
-    return {
-      goto: dest_url,
-    };
-  },
-});
+];
 
 module.exports = {
   sc_plugin_api_version: 1,
