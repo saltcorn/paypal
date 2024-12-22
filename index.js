@@ -12,6 +12,17 @@ const { getState, features } = require("@saltcorn/data/db/state");
 
 const axios = require("axios");
 const { createHash, createHmac } = require("crypto");
+const paypal = require("paypal-rest-sdk");
+
+const onLoad = async (cfg) => {
+  if (cfg && cfg.client_id)
+    paypal.configure({
+      mode: cfg.mode,
+      client_id: cfg.client_id,
+      client_secret: cfg.client_secret,
+    });
+};
+
 const configuration_workflow = () => {
   const cfg_base_url = getState().getConfig("base_url");
 
@@ -26,6 +37,13 @@ const configuration_workflow = () => {
               ? "You should set the 'Base URL' configration property. "
               : "",
             fields: [
+              {
+                name: "mode",
+                label: "Mode",
+                type: "String",
+                required: true,
+                attributes: { options: ["Sandbox", "Live"] },
+              },
               {
                 name: "client_id",
                 label: "Client ID",
@@ -48,6 +66,7 @@ const configuration_workflow = () => {
 module.exports = {
   sc_plugin_api_version: 1,
   configuration_workflow,
+  onLoad,
   // actions,
   // viewtemplates,
 };
