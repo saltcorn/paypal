@@ -17,7 +17,7 @@ const paypal = require("paypal-rest-sdk");
 const onLoad = async (cfg) => {
   if (cfg && cfg.client_id)
     paypal.configure({
-      mode: cfg.mode,
+      mode: (cfg.mode || "sandbox").toLowerCase(),
       client_id: cfg.client_id,
       client_secret: cfg.client_secret,
     });
