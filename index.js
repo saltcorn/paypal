@@ -189,7 +189,7 @@ const actions = () => ({
           },
         ],
       };
-
+      console.log("payment json", create_payment_json)
       let { payment, error } = await new Promise((resolve, reject) => {
         paypal.payment.create(create_payment_json, function (error, payment) {
           resolve({ error, payment });
