@@ -318,11 +318,11 @@ const viewtemplates = () => [
         console.log("paypal error", error);
 
         if (paid_field) upd[paid_field] = false;
-        dest_url = `/view/${success_view}?id=${row.id}`;
+        dest_url = `/view/${failure_view}?id=${row.id}`;
       } else {
         console.log("paypal success", JSON.stringify(success, null, 2));
-        if (paid_field) upd[paid_field] = false;
-        dest_url = `/view/${failure_view}?id=${row.id}`;
+        if (paid_field) upd[paid_field] = true;
+        dest_url = `/view/${success_view}?id=${row.id}`;
       }
 
       if (Object.keys(upd).length > 0)
