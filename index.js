@@ -93,6 +93,13 @@ const actions = () => ({
           showIf: { amount_field: "Formula" },
         },
         {
+          name: "description",
+          label: "Transaction description",
+          type: "String",
+          required: true,
+          sublabel: "Interpolations <code>{{ }}</code> available",
+        },
+        {
           name: "currency",
           label: "Currency",
           type: "String",
@@ -116,7 +123,13 @@ const actions = () => ({
       req,
       user,
       row,
-      configuration: { currency, amount_field, amount_formula, callback_view },
+      configuration: {
+        currency,
+        amount_field,
+        amount_formula,
+        callback_view,
+        description,
+      },
     }) => {
       let amount;
       console.log(
@@ -158,6 +171,11 @@ const actions = () => ({
       let use_currency = interpolate(currency, row, user);
       const cfg_base_url = getState().getConfig("base_url");
       const cb_url = `${cfg_base_url}view/${callback_view}?id=${row.id}&amt=${amount}&ccy=${use_currency}`;
+
+      const use_description = description
+        ? interpolate(description, row, user)
+        : getState().getConfig("site_name");
+
       // from https://www.geeksforgeeks.org/how-to-integrate-paypal-in-node/
       const create_payment_json = {
         intent: "sale",
@@ -185,11 +203,11 @@ const actions = () => ({
               currency: use_currency,
               total: amount,
             },
-            description: "Hat for the best team ever",
+            description: use_description,
           },
         ],
       };
-      console.log("payment json", create_payment_json)
+      console.log("payment json", create_payment_json);
       let { payment, error } = await new Promise((resolve, reject) => {
         paypal.payment.create(create_payment_json, function (error, payment) {
           resolve({ error, payment });
@@ -198,7 +216,7 @@ const actions = () => ({
       if (error) {
         throw error;
       } else {
-        console.log("paypal payment", payment)
+        console.log("paypal payment", payment);
         for (let i = 0; i < payment.links.length; i++) {
           if (payment.links[i].rel === "approval_url") {
             return { goto: payment.links[i].href };
